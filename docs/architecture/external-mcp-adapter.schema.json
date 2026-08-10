@@ -1,0 +1,559 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:apple2ts:external-mcp-adapter:0.1",
+  "$defs": {
+    "ClientKey": {
+      "type": "string",
+      "description": "Base64url without padding of at least 32 random bytes",
+      "minLength": 43,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "OpaqueValue": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 1024
+    },
+    "ToolName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "ProjectionItemId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+    },
+    "OperationError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 1024 },
+        "retryable": { "type": "boolean" },
+        "effectState": {
+          "enum": ["none", "partial", "committed", "unknown"]
+        },
+        "details": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": true
+        }
+      }
+    },
+    "RecoverySelector": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reservation"],
+          "properties": {
+            "reservation": { "$ref": "#/$defs/OpaqueValue" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clientKey"],
+          "properties": {
+            "clientKey": { "$ref": "#/$defs/ClientKey" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["handle"],
+          "properties": {
+            "handle": { "$ref": "#/$defs/OpaqueValue" }
+          }
+        }
+      ]
+    },
+    "RecoveryData": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "reservation": { "$ref": "#/$defs/OpaqueValue" },
+        "clientKey": { "$ref": "#/$defs/ClientKey" },
+        "handle": { "$ref": "#/$defs/OpaqueValue" }
+      }
+    },
+    "ToolFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "error": { "$ref": "#/$defs/OperationError" },
+        "recovery": { "$ref": "#/$defs/RecoveryData" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "error": {
+                "required": ["effectState"],
+                "properties": { "effectState": { "const": "unknown" } }
+              }
+            }
+          },
+          "then": { "required": ["recovery"] }
+        }
+      ]
+    },
+    "ReserveOperationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clientKey", "tool", "arguments"],
+      "properties": {
+        "clientKey": { "$ref": "#/$defs/ClientKey" },
+        "tool": { "$ref": "#/$defs/ToolName" },
+        "arguments": {
+          "type": "object",
+          "maxProperties": 256,
+          "additionalProperties": true
+        },
+        "target": { "$ref": "#/$defs/OpaqueValue" }
+      }
+    },
+    "ReserveOperationSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "result"],
+      "properties": {
+        "ok": { "const": true },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reservation",
+            "serverIncarnation",
+            "target",
+            "expiresAt",
+            "statusTool"
+          ],
+          "properties": {
+            "reservation": { "$ref": "#/$defs/OpaqueValue" },
+            "serverIncarnation": { "$ref": "#/$defs/OpaqueValue" },
+            "target": { "$ref": "#/$defs/OpaqueValue" },
+            "expiresAt": { "type": "string", "format": "date-time" },
+            "statusTool": { "const": "get_operation_status" }
+          }
+        }
+      }
+    },
+    "ReserveOperationOutput": {
+      "oneOf": [
+        { "$ref": "#/$defs/ReserveOperationSuccess" },
+        { "$ref": "#/$defs/ToolFailure" }
+      ]
+    },
+    "GetOperationStatusInput": {
+      "$ref": "#/$defs/RecoverySelector"
+    },
+    "OperationStatusOutput": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reservation",
+            "serverIncarnation",
+            "target",
+            "expiresAt"
+          ],
+          "properties": {
+            "state": { "const": "reserved" },
+            "reservation": { "$ref": "#/$defs/OpaqueValue" },
+            "serverIncarnation": { "$ref": "#/$defs/OpaqueValue" },
+            "target": { "$ref": "#/$defs/OpaqueValue" },
+            "expiresAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "handle", "tool", "recovery"],
+          "properties": {
+            "state": { "const": "pending" },
+            "handle": { "$ref": "#/$defs/OpaqueValue" },
+            "tool": { "$ref": "#/$defs/ToolName" },
+            "recovery": { "$ref": "#/$defs/RecoveryData" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "handle", "tool", "result"],
+          "properties": {
+            "state": { "const": "completed" },
+            "handle": { "$ref": "#/$defs/OpaqueValue" },
+            "tool": { "$ref": "#/$defs/ToolName" },
+            "result": true
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "handle", "tool", "error"],
+          "properties": {
+            "state": { "const": "failed" },
+            "handle": { "$ref": "#/$defs/OpaqueValue" },
+            "tool": { "$ref": "#/$defs/ToolName" },
+            "error": { "$ref": "#/$defs/OperationError" },
+            "recovery": { "$ref": "#/$defs/RecoveryData" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "error": {
+                    "required": ["effectState"],
+                    "properties": { "effectState": { "const": "unknown" } }
+                  }
+                }
+              },
+              "then": { "required": ["recovery"] }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "effectState", "recovery"],
+          "properties": {
+            "state": { "const": "uncertain" },
+            "effectState": { "const": "unknown" },
+            "recovery": { "$ref": "#/$defs/RecoveryData" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state"],
+          "properties": { "state": { "const": "expired" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "effectState", "recovery"],
+          "properties": {
+            "state": { "const": "unknown_after_restart" },
+            "effectState": { "const": "unknown" },
+            "recovery": { "$ref": "#/$defs/RecoveryData" }
+          }
+        },
+        { "$ref": "#/$defs/ToolFailure" }
+      ]
+    },
+    "OperationRouting": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "selectedTarget", "reasons"],
+          "properties": {
+            "state": { "const": "ready" },
+            "selectedTarget": { "$ref": "#/$defs/OpaqueValue" },
+            "reasons": { "type": "array", "maxItems": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "blocked" },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "NO_ACTIVE_SESSION",
+                  "INCOMPATIBLE_OPERATION",
+                  "CATALOG_MISMATCH"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "ambiguous" },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": { "const": "AMBIGUOUS_SESSION" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "draining" },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": { "const": "SESSION_DRAINING" }
+            }
+          }
+        }
+      ]
+    },
+    "OperationTargetAvailability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "catalogVersion", "reasons"],
+          "properties": {
+            "state": { "const": "available" },
+            "catalogVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "reasons": { "type": "array", "maxItems": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": { "const": "NO_ACTIVE_SESSION" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "incompatible" },
+            "catalogVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "enum": ["INCOMPATIBLE_OPERATION", "CATALOG_MISMATCH"]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "draining" },
+            "catalogVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": { "const": "SESSION_DRAINING" }
+            }
+          }
+        }
+      ]
+    },
+    "FixedOperationItemAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding", "kind", "operation", "routing", "targets"],
+      "properties": {
+        "binding": { "const": "fixedOperation" },
+        "kind": {
+          "enum": ["tool", "resource", "resourceTemplate", "prompt"]
+        },
+        "operation": { "$ref": "#/$defs/ToolName" },
+        "routing": { "$ref": "#/$defs/OperationRouting" },
+        "targets": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": { "$ref": "#/$defs/OpaqueValue" },
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationTargetAvailability"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "routing": {
+                "properties": { "state": { "const": "ready" } }
+              }
+            }
+          },
+          "then": {
+            "properties": { "targets": { "minProperties": 1 } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "routing": {
+                "properties": { "state": { "const": "ambiguous" } }
+              }
+            }
+          },
+          "then": {
+            "properties": { "targets": { "minProperties": 2 } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "routing": {
+                "properties": { "state": { "const": "draining" } }
+              }
+            }
+          },
+          "then": {
+            "properties": { "targets": { "minProperties": 1 } }
+          }
+        }
+      ]
+    },
+    "RouterActionAvailabilityState": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "available" },
+            "reasons": { "type": "array", "maxItems": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "draining" },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": { "const": "ROUTER_DRAINING" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reasons": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": { "const": "ROUTER_UNAVAILABLE" }
+            }
+          }
+        }
+      ]
+    },
+    "RouterActionItemAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding", "kind", "action", "inputDependent", "availability"],
+      "properties": {
+        "binding": { "const": "routerAction" },
+        "kind": { "const": "tool" },
+        "action": { "$ref": "#/$defs/ToolName" },
+        "inputDependent": { "const": true },
+        "availability": { "$ref": "#/$defs/RouterActionAvailabilityState" }
+      }
+    },
+    "ProjectedItemAvailability": {
+      "oneOf": [
+        { "$ref": "#/$defs/FixedOperationItemAvailability" },
+        { "$ref": "#/$defs/RouterActionItemAvailability" }
+      ]
+    },
+    "AvailabilityDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serverIncarnation",
+        "manifestVersion",
+        "generatedAt",
+        "items"
+      ],
+      "properties": {
+        "serverIncarnation": { "$ref": "#/$defs/OpaqueValue" },
+        "manifestVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "items": {
+          "type": "object",
+          "maxProperties": 256,
+          "propertyNames": { "$ref": "#/$defs/ProjectionItemId" },
+          "additionalProperties": {
+            "$ref": "#/$defs/ProjectedItemAvailability"
+          }
+        }
+      }
+    },
+    "Apple2TSItemErrorData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "retryable": { "type": "boolean" },
+        "effectState": {
+          "enum": ["none", "partial", "committed", "unknown"]
+        },
+        "details": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": true
+        },
+        "recovery": { "$ref": "#/$defs/RecoveryData" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["effectState"],
+            "properties": { "effectState": { "const": "unknown" } }
+          },
+          "then": { "required": ["recovery"] }
+        }
+      ]
+    }
+  }
+}
